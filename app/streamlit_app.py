@@ -45,6 +45,25 @@ def pct_str(x: float) -> str:
     return f"{x * 100:.2f}%"
 
 
+FEATURE_LABELS = {
+    "num__long_contract": "Long-term contract",
+    "num__tenure": "Tenure (months)",
+    "num__total_charges": "Total charges",
+    "num__fiber_optic_customer": "Fiber optic service",
+    "cat__online_security_No": "No online security",
+    "cat__tech_support_No": "No tech support",
+    "num__monthly_charges": "Monthly charges",
+    "num__avg_monthly_value_proxy": "Average monthly value",
+    "cat__payment_method_Electronic check": "Electronic check payment",
+    "cat__contract_Two year": "Two-year contract",
+    "cat__paperless_billing_No": "No paperless billing",
+    "cat__multiple_lines_No": "No multiple phone lines",
+    "cat__contract_Month-to-month": "Month-to-month contract",
+    "cat__contract_One year": "One-year contract",
+    "cat__streaming_movies_Yes": "Movie streaming subscription",
+}
+
+
 def classify_risk(score: float) -> str:
     if score >= 0.80:
         return "Very High"
@@ -80,8 +99,8 @@ def build_scored_test_set(test_df: pd.DataFrame, artifact: dict) -> pd.DataFrame
 def plot_score_distribution(scored_df: pd.DataFrame):
     fig, ax = plt.subplots(figsize=(8, 4))
     ax.hist(scored_df["churn_score"], bins=20)
-    ax.set_title("Predicted Churn Risk Distribution")
-    ax.set_xlabel("Predicted churn probability")
+    ax.set_title("Distribution of customer risk scores")
+    ax.set_xlabel("Churn risk score")
     ax.set_ylabel("Number of customers")
     plt.tight_layout()
     return fig
@@ -91,8 +110,9 @@ def plot_top_features(shap_df: pd.DataFrame, top_n: int = 10):
     plot_df = shap_df.head(top_n).sort_values("mean_abs_shap", ascending=True)
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.barh(plot_df["feature"], plot_df["mean_abs_shap"])
-    ax.set_title(f"Top {top_n} Churn Drivers (SHAP)")
+    labels = plot_df["feature"].map(FEATURE_LABELS).fillna(plot_df["feature"])
+    ax.barh(labels, plot_df["mean_abs_shap"])
+    ax.set_title(f"Top {top_n} features by SHAP contribution")
     ax.set_xlabel("Mean absolute SHAP value")
     ax.set_ylabel("Feature")
     plt.tight_layout()
@@ -160,17 +180,17 @@ lift_at_10 = default_metrics["recall_at_top10pct"] / 0.10
 # -----------------------------------------------------------------------------
 # Sidebar
 # -----------------------------------------------------------------------------
-st.sidebar.title("Dashboard Controls")
+st.sidebar.title("Explore the results")
 
 top_n_features = st.sidebar.slider(
-    "Number of top explanatory features",
+    "Features to show in the SHAP chart",
     min_value=5,
     max_value=15,
     value=10,
 )
 
 top_k_customers = st.sidebar.slider(
-    "Number of highest-risk customers to display",
+    "Customer records to display",
     min_value=10,
     max_value=100,
     value=25,
@@ -178,13 +198,14 @@ top_k_customers = st.sidebar.slider(
 )
 
 selected_risk_levels = st.sidebar.multiselect(
-    "Filter risk levels",
+    "Risk levels in the customer table",
     options=["Very High", "High", "Moderate", "Low", "Very Low"],
     default=["Very High", "High", "Moderate", "Low", "Very Low"],
 )
 
 st.sidebar.markdown("---")
 st.sidebar.write(f"**Final model:** {model_name}")
+st.sidebar.write("**Overview classification threshold:** 0.50")
 st.sidebar.write(f"**Validation-selected threshold:** {validation_threshold:.2f}")
 
 
@@ -194,21 +215,14 @@ st.sidebar.write(f"**Validation-selected threshold:** {validation_threshold:.2f}
 st.title("📉 Customer Churn Prediction Dashboard")
 st.markdown(
     """
-This dashboard summarizes the final churn prediction pipeline:
-- final model performance,
-- explanatory drivers of churn,
-- score distribution,
-- highest-risk customers,
-- business recommendations.
+Explore the results of an end-to-end telecom churn prediction project:
+model performance, SHAP explanations, customer risk profiles, and retention recommendations.
 """
 )
 
-st.info(
-    """
-**Key insights:** XGBoost is the final model.  
-It achieves **84.82% ROC-AUC** and **65.19% PR-AUC** on the test set.  
-The highest-risk profile is dominated by **new customers on month-to-month contracts with fiber optic service, electronic check payments, and no support/security services**.
-"""
+st.caption(
+    f"Model: {model_name} · Evaluation data: {len(test_df):,} held-out test customers "
+    "from the IBM Telco Customer Churn dataset."
 )
 
 st.markdown("---")
@@ -217,23 +231,29 @@ st.markdown("---")
 # -----------------------------------------------------------------------------
 # Section 1 - Model overview
 # -----------------------------------------------------------------------------
-st.header("1. Model Overview")
+st.header("1. Model performance")
 
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Model", model_name)
-col2.metric("ROC-AUC", pct_str(default_metrics["roc_auc"]))
-col3.metric("PR-AUC", pct_str(default_metrics["pr_auc"]))
-col4.metric("F1-score", pct_str(default_metrics["f1"]))
+col1, col2, col3 = st.columns(3)
+col1.metric("ROC-AUC", f"{default_metrics['roc_auc']:.4f}")
+col2.metric("Churners captured in top 10%", pct_str(default_metrics["recall_at_top10pct"]))
+col3.metric("Lift over random targeting", f"{lift_at_10:.2f}×")
 
-col5, col6, col7, col8 = st.columns(4)
+st.info(
+    f"Selecting the highest-risk 10% of test customers captures "
+    f"**{pct_str(default_metrics['recall_at_top10pct'])} of all churners**—"
+    f"approximately **{lift_at_10:.2f} times** the coverage of random targeting."
+)
+
+st.caption(
+    "Precision, recall, F1, and the predicted churn rate below use a threshold of 0.50. "
+    f"The validation-selected threshold of {validation_threshold:.2f} is also reported in the full test results."
+)
+col4, col5, col6, col7, col8 = st.columns(5)
+col4.metric("Average precision (PR-AUC)", f"{default_metrics['pr_auc']:.4f}")
 col5.metric("Precision", pct_str(default_metrics["precision"]))
 col6.metric("Recall", pct_str(default_metrics["recall"]))
-col7.metric("Recall@Top10%", pct_str(default_metrics["recall_at_top10pct"]))
-col8.metric("Predicted Positive Rate", pct_str(default_metrics["predicted_positive_rate"]))
-
-col9, col10 = st.columns(2)
-col9.metric("Validation Threshold", f"{validation_threshold:.2f}")
-col10.metric("Lift@Top10%", f"{lift_at_10:.2f}x")
+col7.metric("F1-score", f"{default_metrics['f1']:.4f}")
+col8.metric("Predicted churn rate", pct_str(default_metrics["predicted_positive_rate"]))
 
 with st.expander("See full test metrics table"):
     st.dataframe(test_results.round(4), use_container_width=True)
@@ -245,20 +265,19 @@ with st.expander("See validation model comparison"):
 # -----------------------------------------------------------------------------
 # Section 2 - Explainability
 # -----------------------------------------------------------------------------
-st.header("2. Top Churn Drivers")
+st.header("2. What influences the predictions?")
 
 st.pyplot(plot_top_features(global_shap_df, top_n=top_n_features), clear_figure=True)
 
 st.markdown(
     """
-**Main explanatory themes observed in the final model**
-- contract commitment,
-- customer tenure,
-- billing level,
-- support/security services,
-- internet configuration,
-- payment behavior.
+Contract commitment and tenure have the largest individual SHAP contributions.
+Billing, internet service, support subscriptions, and payment method also influence the scores.
 """
+)
+st.caption(
+    "Longer bars show larger average contributions to the model's predictions. "
+    "This chart shows contribution size; it does not show whether a feature raises or lowers a customer's score."
 )
 
 with st.expander("View SHAP importance table"):
@@ -268,7 +287,11 @@ with st.expander("View SHAP importance table"):
 # -----------------------------------------------------------------------------
 # Section 3 - Score distribution
 # -----------------------------------------------------------------------------
-st.header("3. Predicted Churn Risk Distribution")
+st.header("3. Customer risk scores")
+st.markdown(
+    "Scores rank customers from lower to higher predicted churn risk. "
+    "The summaries below describe the full test set."
+)
 
 st.pyplot(plot_score_distribution(scored_test_df), clear_figure=True)
 
@@ -303,14 +326,22 @@ with col_b:
     st.subheader("Risk Cohort Summary")
     st.dataframe(cohort_df.round(4), use_container_width=True)
 
-st.subheader("Risk Segmentation")
+st.subheader("Customers by risk level")
+st.caption(
+    "Score bands: Very Low < 0.20; Low 0.20–<0.40; Moderate 0.40–<0.60; "
+    "High 0.60–<0.80; Very High ≥ 0.80."
+)
 st.pyplot(plot_risk_level_distribution(scored_test_df), clear_figure=True)
 
 
 # -----------------------------------------------------------------------------
 # Section 4 - High-risk customers
 # -----------------------------------------------------------------------------
-st.header("4. Highest-Risk Customers to Prioritize")
+st.header("4. Customers to prioritize")
+st.markdown(
+    "Test records are ordered by risk score, highest first. "
+    "Use the sidebar to select risk levels and the number of records to display or download."
+)
 
 filtered_scored_df = scored_test_df[scored_test_df["risk_level"].isin(selected_risk_levels)].copy()
 
@@ -346,13 +377,15 @@ st.download_button(
 # -----------------------------------------------------------------------------
 # Section 5 - Risk profile comparison
 # -----------------------------------------------------------------------------
-st.header("5. High-Risk vs Low-Risk Profile Comparison")
+st.header("5. High-risk and low-risk customer profiles")
 
 st.markdown(
     """
-This table compares the overall population with the top 10% highest-risk customers and the bottom 10% lowest-risk customers.
+The table compares the full test set with the highest-risk and lowest-risk 10% of customers. Values are percentages within each group.
 
-**Interpretation:** top-risk customers are overwhelmingly month-to-month, fiber-optic, electronic-check users with no support/security services, while bottom-risk customers are mostly long-tenure customers on long contracts.
+All customers in the highest-risk group have month-to-month contracts, and 91.51% have less than 12 months of tenure.
+Fiber optic service, electronic check payments, and the absence of tech support or online security are also common.
+In the lowest-risk group, 89.62% have two-year contracts.
 """
 )
 
@@ -362,20 +395,17 @@ st.dataframe(profile_df, use_container_width=True)
 # -----------------------------------------------------------------------------
 # Section 6 - Recommendations
 # -----------------------------------------------------------------------------
-st.header("6. Business Recommendations")
+st.header("6. Retention recommendations")
 
 st.markdown(
     """
-### Main takeaways
-- The model identifies a clear high-risk profile: new customers, month-to-month contracts, fiber optic service, electronic check payments, and lack of support/security services.
-- The lowest-risk customers tend to have long tenure, long contracts, lower monthly charges, and more stable service/payment configurations.
+1. **Start outreach early.** Prioritize new customers on month-to-month contracts for onboarding follow-ups and retention campaigns.
+2. **Review the fiber optic customer experience.** Investigate service issues and support needs, particularly among customers without tech support or online security.
+3. **Test offers for electronic-check customers.** Evaluate payment migration incentives and retention offers for this segment.
+4. **Offer relevant contract and support options.** Test longer contracts and support bundles where they fit customer needs.
+5. **Allocate contacts by risk score.** Match the number of selected customers to campaign capacity, then track response, retention, and cost.
 
-### Recommended actions
-1. Prioritize new and month-to-month customers for early retention campaigns.
-2. Investigate churn risk among fiber optic customers, especially when support/security services are absent.
-3. Target electronic-check customers with payment migration or retention incentives.
-4. Promote longer contracts and support/security bundles where relevant.
-5. Use churn scores as a prioritization tool for retention operations, not only as a binary classification output.
+These recommendations use the observed profiles to guide campaign design. Campaign results are needed to measure the effect of each offer.
 """
 )
 
@@ -385,5 +415,5 @@ st.markdown(
 # -----------------------------------------------------------------------------
 st.markdown("---")
 st.caption(
-    "Built with Streamlit | Final model: XGBoost | Artifacts loaded from models/ and reports/"
+    "Customer Churn Prediction · Built with Streamlit · Model evaluation, SHAP explanations, and retention planning"
 )
